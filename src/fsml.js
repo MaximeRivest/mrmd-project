@@ -318,12 +318,13 @@ export function titleFromFilename(filename) {
 }
 
 /**
- * Compute new paths when reordering files
+ * Compute new paths when reordering files (simple version)
  *
  * @param {string} sourcePath - Path being moved
  * @param {string} targetPath - Path to move relative to
  * @param {'before' | 'after' | 'inside'} position - Where to place
- * @returns {object} New path and required renames
+ * @returns {object} New path and required renames (source only, no sibling shifts)
+ * @deprecated Use computeReorder() for full sibling shifting support
  */
 export function computeNewPath(sourcePath, targetPath, position) {
   const source = parsePath(sourcePath);
@@ -368,4 +369,206 @@ export function computeNewPath(sourcePath, targetPath, position) {
     newPath,
     renames,
   };
+}
+
+/**
+ * Compute all renames needed when reordering files with proper sibling shifting.
+ *
+ * This is the main function for drag-drop reordering. It:
+ * 1. Computes the new path for the source
+ * 2. Shifts siblings to make room (updates their order prefixes)
+ * 3. Returns all renames in the correct execution order
+ *
+ * @param {string} sourcePath - Path being moved
+ * @param {string} targetPath - Path to move relative to (drop target)
+ * @param {'before' | 'after' | 'inside'} position - Where to place relative to target
+ * @param {string[]} siblings - All paths in the target directory (for shift calculation)
+ * @returns {{ newPath: string, renames: Array<{ from: string, to: string }> }}
+ *
+ * @example
+ * // Drag 02-config.md before 01-intro.md
+ * computeReorder('02-config.md', '01-intro.md', 'before', ['01-intro.md', '02-config.md'])
+ * // Returns {
+ * //   newPath: '01-config.md',
+ * //   renames: [
+ * //     { from: '01-intro.md', to: '02-intro.md' },  // shift
+ * //     { from: '02-config.md', to: '01-config.md' } // move
+ * //   ]
+ * // }
+ */
+export function computeReorder(sourcePath, targetPath, position, siblings = []) {
+  const source = parsePath(sourcePath);
+  const target = parsePath(targetPath);
+
+  // Determine target directory
+  let targetDir = '';
+  if (position === 'inside') {
+    targetDir = targetPath;
+  } else {
+    targetDir = target.parent;
+  }
+
+  // Filter siblings to only those in the target directory
+  // and parse them for order information
+  const siblingsInDir = siblings
+    .filter(p => {
+      const parsed = parsePath(p);
+      return parsed.parent === targetDir;
+    })
+    .map(p => ({
+      path: p,
+      ...parsePath(p),
+    }))
+    .filter(s => s.order !== null) // Only numbered items participate in reordering
+    .sort((a, b) => a.order - b.order);
+
+  // Determine what order number the source should get
+  let insertOrder;
+  if (position === 'inside') {
+    // Moving inside a folder - find max order and add 1, or use 1 if empty
+    const maxOrder = siblingsInDir.reduce((max, s) => Math.max(max, s.order || 0), 0);
+    insertOrder = maxOrder + 1;
+  } else if (position === 'before') {
+    insertOrder = target.order || 1;
+  } else {
+    // after
+    insertOrder = (target.order || 0) + 1;
+  }
+
+  // Build new path for source
+  const paddedOrder = String(insertOrder).padStart(2, '0');
+  const sourceExt = source.isFolder ? '' : source.extension;
+  const newFilename = `${paddedOrder}-${source.name}${sourceExt}`;
+  const newPath = targetDir ? `${targetDir}/${newFilename}` : newFilename;
+
+  // Now compute all renames needed
+  const renames = [];
+
+  // Is source currently in the same directory?
+  const sourceInSameDir = source.parent === targetDir;
+
+  // Determine which siblings need to shift
+  // We need to shift siblings at or after insertOrder to make room
+  // But if source is in same dir and moving "down", logic is different
+
+  if (sourceInSameDir && source.order !== null) {
+    // Source is moving within same directory
+    const sourceOrder = source.order;
+
+    if (sourceOrder < insertOrder) {
+      // Moving DOWN (e.g., 01 -> position after 03)
+      // Items between old position and new position shift UP (decrease order)
+      // insertOrder needs adjustment since source is leaving
+      const adjustedInsertOrder = insertOrder - 1;
+
+      for (const sibling of siblingsInDir) {
+        if (sibling.path === sourcePath) continue;
+
+        if (sibling.order > sourceOrder && sibling.order <= adjustedInsertOrder) {
+          // This sibling shifts up (decreases order)
+          const newSiblingOrder = sibling.order - 1;
+          const siblingExt = sibling.isFolder ? '' : sibling.extension;
+          const newSiblingFilename = `${String(newSiblingOrder).padStart(2, '0')}-${sibling.name}${siblingExt}`;
+          const newSiblingPath = targetDir ? `${targetDir}/${newSiblingFilename}` : newSiblingFilename;
+
+          if (sibling.path !== newSiblingPath) {
+            renames.push({ from: sibling.path, to: newSiblingPath });
+          }
+        }
+      }
+
+      // Source gets the adjusted insert position
+      const finalSourceOrder = adjustedInsertOrder;
+      const finalSourceFilename = `${String(finalSourceOrder).padStart(2, '0')}-${source.name}${sourceExt}`;
+      const finalSourcePath = targetDir ? `${targetDir}/${finalSourceFilename}` : finalSourceFilename;
+
+      if (sourcePath !== finalSourcePath) {
+        renames.push({ from: sourcePath, to: finalSourcePath });
+      }
+
+      return { newPath: finalSourcePath, renames: sortRenamesForExecution(renames, 'down') };
+
+    } else if (sourceOrder > insertOrder) {
+      // Moving UP (e.g., 03 -> position before 01)
+      // Items at or after insertOrder (up to source's old position) shift DOWN (increase order)
+
+      for (const sibling of siblingsInDir) {
+        if (sibling.path === sourcePath) continue;
+
+        if (sibling.order >= insertOrder && sibling.order < sourceOrder) {
+          // This sibling shifts down (increases order)
+          const newSiblingOrder = sibling.order + 1;
+          const siblingExt = sibling.isFolder ? '' : sibling.extension;
+          const newSiblingFilename = `${String(newSiblingOrder).padStart(2, '0')}-${sibling.name}${siblingExt}`;
+          const newSiblingPath = targetDir ? `${targetDir}/${newSiblingFilename}` : newSiblingFilename;
+
+          if (sibling.path !== newSiblingPath) {
+            renames.push({ from: sibling.path, to: newSiblingPath });
+          }
+        }
+      }
+
+      // Source gets insertOrder
+      if (sourcePath !== newPath) {
+        renames.push({ from: sourcePath, to: newPath });
+      }
+
+      return { newPath, renames: sortRenamesForExecution(renames, 'up') };
+
+    } else {
+      // Same position - no change needed
+      return { newPath: sourcePath, renames: [] };
+    }
+
+  } else {
+    // Source is moving from different directory (or has no order)
+    // All siblings at or after insertOrder need to shift down (increase order)
+
+    for (const sibling of siblingsInDir) {
+      if (sibling.order >= insertOrder) {
+        const newSiblingOrder = sibling.order + 1;
+        const siblingExt = sibling.isFolder ? '' : sibling.extension;
+        const newSiblingFilename = `${String(newSiblingOrder).padStart(2, '0')}-${sibling.name}${siblingExt}`;
+        const newSiblingPath = targetDir ? `${targetDir}/${newSiblingFilename}` : newSiblingFilename;
+
+        if (sibling.path !== newSiblingPath) {
+          renames.push({ from: sibling.path, to: newSiblingPath });
+        }
+      }
+    }
+
+    // Source gets insertOrder
+    if (sourcePath !== newPath) {
+      renames.push({ from: sourcePath, to: newPath });
+    }
+
+    return { newPath, renames: sortRenamesForExecution(renames, 'up') };
+  }
+}
+
+/**
+ * Sort renames to avoid conflicts during execution.
+ *
+ * When shifting DOWN (increasing order numbers), rename from highest to lowest
+ * to avoid collisions (e.g., rename 02->03 before 01->02).
+ *
+ * When shifting UP (decreasing order numbers), rename from lowest to highest.
+ *
+ * @param {Array<{ from: string, to: string }>} renames
+ * @param {'up' | 'down'} direction - 'up' = orders increasing, 'down' = orders decreasing
+ * @returns {Array<{ from: string, to: string }>}
+ */
+function sortRenamesForExecution(renames, direction) {
+  return renames.sort((a, b) => {
+    const aOrder = parsePath(a.from).order || 0;
+    const bOrder = parsePath(b.from).order || 0;
+
+    if (direction === 'up') {
+      // Shifting down (orders increasing) - rename highest first
+      return bOrder - aOrder;
+    } else {
+      // Shifting up (orders decreasing) - rename lowest first
+      return aOrder - bOrder;
+    }
+  });
 }
