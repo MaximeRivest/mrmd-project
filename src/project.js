@@ -17,6 +17,11 @@ const DEFAULTS = {
       name: 'default',
       auto_start: true,
     },
+    bash: {
+      cwd: '.',
+      name: 'default',
+      auto_start: true,
+    },
   },
   assets: {
     directory: '_assets',
@@ -171,9 +176,10 @@ export function mergeConfig(projectConfig, frontmatter) {
 }
 
 /**
- * Resolve full session configuration for a document
+ * Resolve full session configuration for a document (Python)
  *
  * Computes absolute paths and full session name.
+ * Uses legacy naming format {project}:{name} for backwards compatibility.
  *
  * @param {string} documentPath - Absolute path to document
  * @param {string} projectRoot - Absolute path to project root
@@ -191,24 +197,74 @@ export function mergeConfig(projectConfig, frontmatter) {
 export function resolveSession(documentPath, projectRoot, mergedConfig) {
   const pythonConfig = mergedConfig?.session?.python || {};
   const defaults = DEFAULTS.session.python;
+  const projectName = mergedConfig?.name || 'unnamed';
 
   // Get values with defaults
   const venvRelative = pythonConfig.venv || defaults.venv;
   const cwdRelative = pythonConfig.cwd || defaults.cwd;
   const sessionName = pythonConfig.name || defaults.name;
   const autoStart = pythonConfig.auto_start !== undefined ? pythonConfig.auto_start : defaults.auto_start;
-  const projectName = mergedConfig?.name || 'unnamed';
 
   // Resolve paths relative to project root
   const venv = resolvePath(projectRoot, venvRelative);
   const cwd = resolvePath(projectRoot, cwdRelative);
 
+  // Legacy naming format: {project}:{name} (no language in name)
   return {
     name: `${projectName}:${sessionName}`,
     venv,
     cwd,
     autoStart,
+    language: 'python',
   };
+}
+
+/**
+ * Resolve session configuration for a specific language
+ *
+ * @param {'python' | 'bash'} language - Language to resolve session for
+ * @param {string} documentPath - Absolute path to document
+ * @param {string} projectRoot - Absolute path to project root
+ * @param {object} mergedConfig - Merged configuration
+ * @returns {object} Resolved session config with absolute paths
+ *
+ * @example
+ * const session = Project.resolveSessionForLanguage(
+ *   'bash',
+ *   '/home/user/thesis/chapter/doc.md',
+ *   '/home/user/thesis',
+ *   { name: 'thesis', session: { bash: { cwd: '.', name: 'default' } } }
+ * );
+ * // Returns { name: 'thesis:bash:default', cwd: '/home/user/thesis', autoStart: true }
+ */
+export function resolveSessionForLanguage(language, documentPath, projectRoot, mergedConfig) {
+  const langConfig = mergedConfig?.session?.[language] || {};
+  const defaults = DEFAULTS.session[language] || {};
+  const projectName = mergedConfig?.name || 'unnamed';
+
+  // Common fields for all languages
+  const cwdRelative = langConfig.cwd || defaults.cwd || '.';
+  const sessionName = langConfig.name || defaults.name || 'default';
+  const autoStart = langConfig.auto_start !== undefined ? langConfig.auto_start : (defaults.auto_start !== undefined ? defaults.auto_start : true);
+
+  // Resolve cwd relative to project root
+  const cwd = resolvePath(projectRoot, cwdRelative);
+
+  // Base session info
+  const session = {
+    name: `${projectName}:${language}:${sessionName}`,
+    cwd,
+    autoStart,
+    language,
+  };
+
+  // Language-specific fields
+  if (language === 'python') {
+    const venvRelative = langConfig.venv || defaults.venv || '.venv';
+    session.venv = resolvePath(projectRoot, venvRelative);
+  }
+
+  return session;
 }
 
 /**
