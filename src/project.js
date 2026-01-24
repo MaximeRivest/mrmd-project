@@ -22,6 +22,12 @@ const DEFAULTS = {
       name: 'default',
       auto_start: true,
     },
+    term: {
+      venv: null, // optional, for venv activation in terminals
+      cwd: '.',
+      name: 'default',
+      auto_start: true,
+    },
   },
   assets: {
     directory: '_assets',
@@ -222,7 +228,7 @@ export function resolveSession(documentPath, projectRoot, mergedConfig) {
 /**
  * Resolve session configuration for a specific language
  *
- * @param {'python' | 'bash'} language - Language to resolve session for
+ * @param {'python' | 'bash' | 'term'} language - Language to resolve session for
  * @param {string} documentPath - Absolute path to document
  * @param {string} projectRoot - Absolute path to project root
  * @param {object} mergedConfig - Merged configuration
@@ -262,6 +268,12 @@ export function resolveSessionForLanguage(language, documentPath, projectRoot, m
   if (language === 'python') {
     const venvRelative = langConfig.venv || defaults.venv || '.venv';
     session.venv = resolvePath(projectRoot, venvRelative);
+  } else if (language === 'term') {
+    // Term supports optional venv for activation in terminals
+    const venvRelative = langConfig.venv || defaults.venv;
+    if (venvRelative) {
+      session.venv = resolvePath(projectRoot, venvRelative);
+    }
   }
 
   return session;
