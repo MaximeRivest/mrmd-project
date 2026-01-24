@@ -156,13 +156,68 @@ export function parseFrontmatter(content) {
   try {
     const parsed = YAML.parse(yamlContent);
     if (parsed && typeof parsed === 'object') {
-      return parsed;
+      // Normalize shorthand syntax to full config structure
+      return normalizeFrontmatter(parsed);
     }
     return null;
   } catch (e) {
     // Invalid YAML
     return null;
   }
+}
+
+/**
+ * Normalize shorthand frontmatter syntax to full config structure.
+ *
+ * Supports minimal syntax like:
+ *   python: .venv          -> session: { python: { venv: '.venv' } }
+ *   python: { venv: .venv } -> session: { python: { venv: '.venv' } }
+ *   bash: { cwd: ./src }   -> session: { bash: { cwd: './src' } }
+ *
+ * This enables a cleaner, more readable frontmatter format while
+ * maintaining backwards compatibility with the full verbose syntax.
+ *
+ * @param {object} frontmatter - Parsed frontmatter object
+ * @returns {object} Normalized frontmatter with full structure
+ */
+function normalizeFrontmatter(frontmatter) {
+  if (!frontmatter || typeof frontmatter !== 'object') {
+    return frontmatter;
+  }
+
+  const normalized = { ...frontmatter };
+
+  // Languages that support shorthand syntax
+  const languages = ['python', 'bash', 'term', 'node', 'julia', 'r'];
+
+  for (const lang of languages) {
+    if (lang in normalized && !normalized.session?.[lang]) {
+      const value = normalized[lang];
+
+      // Ensure session object exists
+      if (!normalized.session) {
+        normalized.session = {};
+      }
+
+      if (typeof value === 'string') {
+        // Simple form: python: .venv
+        // For python, string is venv path; for others, it's cwd
+        if (lang === 'python') {
+          normalized.session[lang] = { venv: value };
+        } else {
+          normalized.session[lang] = { cwd: value };
+        }
+      } else if (typeof value === 'object' && value !== null) {
+        // Object form: python: { venv: .venv, cwd: . }
+        normalized.session[lang] = value;
+      }
+
+      // Remove the shorthand key
+      delete normalized[lang];
+    }
+  }
+
+  return normalized;
 }
 
 /**
