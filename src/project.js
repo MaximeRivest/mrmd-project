@@ -22,6 +22,16 @@ const DEFAULTS = {
       name: 'default',
       auto_start: true,
     },
+    r: {
+      cwd: '.',
+      name: 'default',
+      auto_start: true,
+    },
+    julia: {
+      cwd: '.',
+      name: 'default',
+      auto_start: true,
+    },
     term: {
       venv: null, // optional, for venv activation in terminals
       cwd: '.',
