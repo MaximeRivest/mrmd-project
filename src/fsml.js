@@ -7,6 +7,13 @@
  * @module FSML
  */
 
+const INDEX_FILES = new Set(['index.md', 'index.qmd']);
+
+function isIndexFile(filename) {
+  if (!filename) return false;
+  return INDEX_FILES.has(filename.toLowerCase());
+}
+
 /**
  * Parse a relative path into FSML components
  *
@@ -204,9 +211,9 @@ export function buildNavTree(paths) {
       }
     }
 
-    // Check if this is an index.md
+    // Check if this is an index file
     const filename = segments[segments.length - 1];
-    if (filename === 'index.md' && segments.length > 1) {
+    if (isIndexFile(filename) && segments.length > 1) {
       const parentPath = segments.slice(0, -1).join('/');
       if (folders.has(parentPath)) {
         folders.get(parentPath).hasIndex = true;
@@ -219,8 +226,8 @@ export function buildNavTree(paths) {
     const segments = path.split('/');
     const filename = segments[segments.length - 1];
 
-    // Skip index.md files (they're represented by the folder itself)
-    if (filename === 'index.md') continue;
+    // Skip index files (they're represented by the folder itself)
+    if (isIndexFile(filename)) continue;
 
     const parsed = parsePath(path);
 

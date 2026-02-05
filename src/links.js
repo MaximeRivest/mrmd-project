@@ -6,6 +6,39 @@
  * @module Links
  */
 
+const DOC_EXTENSIONS = ['.md', '.qmd'];
+
+function getDocExtension(filePath) {
+  if (!filePath) return '';
+  const lower = filePath.toLowerCase();
+  for (const ext of DOC_EXTENSIONS) {
+    if (lower.endsWith(ext)) return ext;
+  }
+  return '';
+}
+
+function isDocFile(filePath) {
+  return !!getDocExtension(filePath);
+}
+
+function stripDocExtension(filePath) {
+  const ext = getDocExtension(filePath);
+  return ext ? filePath.slice(0, -ext.length) : filePath;
+}
+
+function findIndexFile(sorted, parentDir, preferredExt) {
+  if (!parentDir) return null;
+  const preferred = parentDir + '/index' + preferredExt;
+  const preferredMatch = sorted.find(f => f === preferred);
+  if (preferredMatch) return preferredMatch;
+  for (const ext of DOC_EXTENSIONS) {
+    const candidate = parentDir + '/index' + ext;
+    const match = sorted.find(f => f === candidate);
+    if (match) return match;
+  }
+  return null;
+}
+
 /**
  * Parse all internal links from content
  *
@@ -65,12 +98,12 @@ export function resolve(target, fromDocument, projectFiles) {
     return resolveSpecialLink(target.toLowerCase(), fromDocument, sortedFiles);
   }
 
-  // Normalize target (remove .md if present, lowercase for matching)
-  const targetNorm = target.replace(/\.md$/, '').toLowerCase();
+  // Normalize target (remove doc extension if present, lowercase for matching)
+  const targetNorm = stripDocExtension(target).toLowerCase();
 
   // 1. Try exact path match
   for (const file of projectFiles) {
-    const fileNorm = file.replace(/\.md$/, '').toLowerCase();
+    const fileNorm = stripDocExtension(file).toLowerCase();
     if (fileNorm === targetNorm || fileNorm === targetNorm + '/index') {
       return file;
     }
@@ -79,7 +112,7 @@ export function resolve(target, fromDocument, projectFiles) {
   // 2. Try matching just the filename part of target against filenames
   const targetFilename = targetNorm.split('/').pop();
   for (const file of projectFiles) {
-    const filename = file.replace(/\.md$/, '').split('/').pop().toLowerCase();
+    const filename = stripDocExtension(file).split('/').pop().toLowerCase();
     // Remove numeric prefix for matching
     const filenameNoPrefix = filename.replace(/^\d+-/, '');
     if (filenameNoPrefix === targetFilename || filename === targetFilename) {
@@ -103,11 +136,11 @@ export function resolve(target, fromDocument, projectFiles) {
  * @private
  */
 function resolveSpecialLink(target, fromDocument, sortedFiles) {
-  // Filter to only .md files (content files)
-  const mdFiles = sortedFiles.filter(f => f.endsWith('.md') && f !== 'mrmd.md');
+  // Filter to only doc files (content files)
+  const docFiles = sortedFiles.filter(f => isDocFile(f) && f !== 'mrmd.md');
 
   // Sort by FSML order
-  const sorted = mdFiles.sort((a, b) => {
+  const sorted = docFiles.sort((a, b) => {
     const aMatch = a.match(/^(\d+)-/);
     const bMatch = b.match(/^(\d+)-/);
     const aOrder = aMatch ? parseInt(aMatch[1]) : Infinity;
@@ -137,8 +170,9 @@ function resolveSpecialLink(target, fromDocument, sortedFiles) {
       const parts = fromDocument.split('/');
       if (parts.length > 1) {
         const parentDir = parts.slice(0, -1).join('/');
-        // Look for index.md in parent
-        const parentIndex = sorted.find(f => f === parentDir + '/index.md');
+        const preferredExt = getDocExtension(fromDocument) || '.md';
+        // Look for index file in parent
+        const parentIndex = findIndexFile(sorted, parentDir, preferredExt);
         if (parentIndex) return parentIndex;
         // Or first file in parent
         const parentFile = sorted.find(f => f.startsWith(parentDir + '/'));
@@ -167,8 +201,8 @@ export function refactor(content, moves, currentDocPath) {
   const renameMap = new Map();
   for (const move of moves) {
     // Extract just the filename without path and extension
-    const oldName = move.from.replace(/\.md$/, '').split('/').pop().replace(/^\d+-/, '');
-    const newName = move.to.replace(/\.md$/, '').split('/').pop().replace(/^\d+-/, '');
+    const oldName = stripDocExtension(move.from).split('/').pop().replace(/^\d+-/, '');
+    const newName = stripDocExtension(move.to).split('/').pop().replace(/^\d+-/, '');
     renameMap.set(oldName.toLowerCase(), newName);
   }
 
